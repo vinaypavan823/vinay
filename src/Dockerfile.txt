@@ -1,0 +1,291 @@
+# GPAC Builder Stage
+FROM alpine:3.6 AS gpac_builder
+ 
+WORKDIR /app
+RUN apk update && \
+    apk add --no-cache \
+        wget \
+        g++ \
+        make \
+        && \
+    wget --no-check-certificate https://codeload.github.com/gpac/gpac/zip/master -O gpac-master.zip && \
+    unzip gpac-master.zip
+ 
+WORKDIR gpac-master
+RUN ./configure --use-zlib=no && \
+    make && \
+    mkdir -p install/bin && \
+    cp -R ./bin/gcc ./install/lib && \
+    rm ./install/lib/gm_* ./install/lib/*.a && \
+    rm -Rf ./install/lib/temp && \
+    mv ./install/lib/MP4* ./install/bin
+ 
+# Build Stage
+FROM maven:3.8.4-openjdk-17 AS build
+ 
+# Copy project files
+COPY src /home/app/src
+COPY pom.xml /home/app
+ 
+# Build the application
+RUN mvn -f /home/app/pom.xml clean package
+ 
+# Package Stage
+#FROM alpine:3.6
+#FROM alpine:latest
+FROM openjdk:17-alpine
+ 
+WORKDIR /app
+COPY --from=gpac_builder /app/gpac-master/install/lib /usr/lib
+COPY --from=gpac_builder /app/gpac-master/install/bin /usr/bin
+COPY --from=build /home/app/target/*.jar /app/lms.jar
+ 
+# Install FFmpeg (already available in Alpine)
+RUN apk add ffmpeg
+ 
+# Expose port (adjust if needed)
+EXPOSE 8080
+ 
+# Start the application
+#ENTRYPOINT ["java","-jar","/usr/local/lib/lms.jar"]
+ENTRYPOINT ["java", "-jar", "/app/lms.jar"]
+
+
+
+
+
+
+
+dockerfile2
+
+# GPAC Builder Stage (using JDK 17 for building)
+FROM openjdk:17-alpine AS gpac_builder
+
+WORKDIR /app
+
+# Install necessary build tools and libraries
+RUN apk update && \
+    apk add --no-cache \
+        wget \
+        g++ \
+        make \
+        zlib-dev \
+        openssl-dev \
+        libjpeg-turbo-dev \
+        libpng-dev && \
+    rm -rf /var/cache/apk/*
+
+# Download and extract GPAC source
+RUN wget https://github.com/gpac/gpac/archive/v2.2.1.tar.gz && \
+    tar -zxvf v2.2.1.tar.gz && \
+    rm v2.2.1.tar.gz
+
+WORKDIR /app/gpac-2.2.1
+
+# Configure, build, and install GPAC
+RUN ./configure --use-zlib=no && \
+    make && \
+    mkdir -p install/bin && \
+    cp -R ./bin/gcc ./install/lib && \
+    rm ./install/lib/gm_* ./install/lib/*.a && \
+    rm -Rf ./install/lib/temp && \
+    mv ./install/lib/MP4* ./install/bin
+
+# Build Stage (using JDK 17 base image)
+FROM maven:3.8.4-openjdk-17 AS build
+
+WORKDIR /home/app
+
+# Copy project files
+COPY src ./src
+COPY pom.xml .
+
+# Build the application
+RUN mvn clean package
+
+# Final Stage (using JDK 17 base image)
+FROM openjdk:17-alpine
+
+WORKDIR /app
+
+# Copy MP4Box binary from the builder stage and set permissions
+COPY --from=gpac_builder /app/gpac-2.2.1/install/bin/MP4Box /usr/local/bin/
+RUN chmod +x /usr/local/bin/MP4Box
+
+# Explicitly set the modules path for MP4Box
+ENV GPAC_DIR /usr/local/lib/gpac
+
+# Copy required libraries
+COPY --from=gpac_builder /app/gpac-2.2.1/install/lib/libgpac.so.12 /usr/local/lib/
+
+# Install FFmpeg
+RUN apk add --no-cache ffmpeg && \
+    rm -rf /var/cache/apk/*
+
+# Set LD_LIBRARY_PATH
+ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+
+# Copy JAR file from the build stage
+COPY --from=build /home/app/target/*.jar /app/lms.jar
+
+# Expose port (adjust if needed)
+EXPOSE 8080
+
+# Start the application
+ENTRYPOINT ["java", "-jar", "/app/lms.jar"]
+
+
+
+
+
+
+
+
+
+#FROM openjdk:11-jdk  # Base image with Java 11 (adjust if needed)
+#FROM eclipse-temurin:17-alpine
+#FROM openjdk:17-alpine
+FROM alpine:3.6 AS gpac_builder
+
+# Use Alpine's package manager (apk) instead of apt-get
+#RUN apk update && apk add --no-cache \
+#    wget \
+#    build-base  # Equivalent of build-essential in Alpine
+
+
+
+# Download and build GPAC (unchanged)
+RUN wget https://gpac.io/download/gpac-latest.tar.gz && \
+    tar -xzf gpac-latest.tar.gz && \
+    cd gpac && \
+    ./configure && \
+    make && \
+    make install
+
+# Install FFmpeg (available in Alpine's repositories)
+RUN apk add --no-cache ffmpeg
+# Set the path to MP4Box and FFmpeg (unchanged)
+ENV PATH="/usr/local/bin:$PATH"
+
+# Copy your Spring Boot application
+#COPY target/your-app.jar /app.jar
+COPY --from=build /home/app/target/*.jar /app/lms.jar
+
+# Expose port (if your application uses a port)
+EXPOSE 8080
+
+# Run the application
+#CMD ["java", "-jar", "/app.jar"]
+ENTRYPOINT ["java", "-jar", "/app/lms.jar"]
+
+
+# GPAC Builder Stage
+#FROM openjdk:17-alpine AS gpac_builder
+FROM debian:bullseye AS gpac_builder
+
+
+RUN apk update && apk add --no-cache wget dpkg build-base ffmpeg 
+#zstd  # Add zstd support
+
+# Download and install the correct GPAC package
+RUN wget https://download.tsi.telecom-paristech.fr/gpac/new_builds/linux64/gpac/gpac_2.3-DEV-rev725-g7aef8038-master_amd64.deb && \
+    dpkg -i gpac_2.3-DEV-rev725-g7aef8038-master_amd64.deb && \
+    rm gpac_2.3-DEV-rev725-g7aef8038-master_amd64.deb
+
+# Build Stage (unchanged)
+FROM maven:3.8.4-openjdk-17 AS build
+
+# Copy project files
+COPY src /home/app/src
+COPY pom.xml /home/app
+
+# Build the application
+RUN mvn -f /home/app/pom.xml clean package
+
+# Package Stage (refined for clarity)
+FROM openjdk:17-alpine
+
+WORKDIR /app
+
+# Copy only mp4box from the GPAC builder stage
+COPY --from=gpac_builder /usr/local/bin/mp4box /usr/local/bin/mp4box
+
+# Copy the built application JAR
+COPY --from=build /home/app/target/*.jar /app/lms.jar
+
+EXPOSE 8080
+ENTRYPOINT ["java", "-jar", "/app/lms.jar"]
+
+
+
+
+
+# GPAC Builder Stage
+FROM openjdk:17-alpine AS gpac_builder
+From ubuntu:latest
+
+RUN apk update && apk add --no-cache wget dpkg build-base ffmpeg zstd  # Add zstd support
+
+# Download and install the correct GPAC package
+RUN wget https://download.tsi.telecom-paristech.fr/gpac/new_builds/linux64/gpac/gpac_2.3-DEV-rev725-g7aef8038-master_amd64.deb && \
+    dpkg -i gpac_2.3-DEV-rev725-g7aef8038-master_amd64.deb && \
+    rm gpac_2.3-DEV-rev725-g7aef8038-master_amd64.deb
+
+# Build Stage (unchanged)
+FROM maven:3.8.4-openjdk-17 AS build
+
+# Copy project files
+COPY src /home/app/src
+COPY pom.xml /home/app
+
+# Build the application
+RUN mvn -f /home/app/pom.xml clean package
+
+# Package Stage (refined for clarity)
+FROM openjdk:17-alpine
+
+WORKDIR /app
+
+# Copy only mp4box from the GPAC builder stage
+COPY --from=gpac_builder /usr/local/bin/mp4box /usr/local/bin/mp4box
+
+# Copy the built application JAR
+COPY --from=build /home/app/target/*.jar /app/lms.jar
+
+EXPOSE 8080
+ENTRYPOINT ["java", "-jar", "/app/lms.jar"]
+
+
+
+
+# Stage 1: Install FFmpeg and MP4Box
+FROM kingdomcreation/ffmpeg-mp4box AS ffmpeg-mp4box-base
+
+# Build Stage
+FROM maven:3.8.4-openjdk-17 AS build
+ 
+# Copy project files
+COPY src /home/app/src
+COPY pom.xml /home/app
+ 
+# Build the application
+RUN mvn -f /home/app/pom.xml clean package
+
+# Stage 3: Package application with FFmpeg and MP4Box
+FROM openjdk:17-alpine AS final
+
+WORKDIR /app
+
+# Copy FFmpeg and MP4Box binaries
+COPY --from=ffmpeg-mp4box-base /usr/local/bin/ffmpeg /usr/local/bin/ffmpeg
+COPY --from=ffmpeg-mp4box-base /usr/local/bin/MP4Box /usr/local/bin/MP4Box
+
+# Copy the built JAR file
+COPY --from=build /home/app/target/*.jar /app/lms.jar
+
+# Expose port 8080
+EXPOSE 8080
+
+# Define the entry point
+ENTRYPOINT ["java", "-jar", "/app/lms.jar"]
+
